@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Jun 29 23:27:14 2021
+Created on Sun Jul  4 14:41:10 2021
 
 @author: felix
 """
+
+import cv2
+
+
+
+
 
 import torch
 from torch import nn
@@ -15,11 +21,11 @@ from torchvision.io import ImageReadMode
 
 from sklearn.model_selection import train_test_split 
 
-from src.dataHandle import create_train_test
+from dataHandle import PortraitData, create_train_test
 
-from src.Unet_model import Unet_model
+from Unet_model import Unet_model
 
-from src.utils import train, test, segmented_img
+from utils import train, test, segmented_img
 
 from argparse import *
 import configparser 
@@ -27,6 +33,9 @@ import json
 import os
 
 import matplotlib.pyplot as plt
+
+
+def crop_portrait(frame, h,w)
 
 if __name__ == '__main__':
     print(os.getcwd())
@@ -48,6 +57,7 @@ if __name__ == '__main__':
     parser.add_argument("-t", "--treshold", type=float, default=None, help="treshold for pixel classification from probabilities.")
     parser.add_argument("-p", "--predict", type=str, default=None, help="path to image.")
     parser.add_argument("-d", "--dropout", type=float, default=None, help="dropout hyperparameter")
+    parser.add_argument("-gpu", "--gpu", action="store_true", default=None, help="run on gpu")
    
     argvs  = parser.parse_args()
     option = parser.parse_args()
@@ -61,20 +71,10 @@ if __name__ == '__main__':
     option.stage_sizes = [64,128,256,512,1024]
     option.head_filter = 32
     option.nb_classes  = 2
-    option.train       = False
-    option.epoch       = 10
     option.width_size  = 96
-    option.clip_im_dir = 'data\\clip_img'
-    option.matting_dir = 'data\\matting'
-    option.batch_size  = 64
-    option.save_weight = None
-    option.load_weight = None
-    option.visualize   = False
     option.treshold    = 0.5
-    option.dropout     = 0.0
-    option.split       = 0.2
-    option.csv_path    = None
-    option.dataset     = None
+    option.gpu         = False
+
     
     # ================================================================================================================ #
     # CONFIG CHECK                                                                                                     #
@@ -96,11 +96,6 @@ if __name__ == '__main__':
         if config_parser.has_option("MODEL","nb-classes"):
             option.nb_classes  = int(config_parser.get("MODEL","nb-classes"))
             
-        if config_parser.has_option("MODEL","save-weight"):
-            if config_parser.get("MODEL","save-weight") == "None" or config_parser.get("MODEL","save-weight") == "":
-                option.save_weight = None
-            else:
-                option.save_weight  = config_parser.get("MODEL","save-weight")
             
         if config_parser.has_option("MODEL","load-weight"):
             if config_parser.get("MODEL","load-weight") == "None" or config_parser.get("MODEL","load-weight") == "":
@@ -111,51 +106,17 @@ if __name__ == '__main__':
         if config_parser.has_option("MODEL","treshold"):
             option.treshold  = float(config_parser.get("MODEL","treshold"))
             
-        if config_parser.has_option("MODEL","dropout"):
-            option.dropout  = float(config_parser.get("MODEL","dropout"))
+
 
 
             
-        if config_parser.has_option("TRAIN","batch-size"):
-            option.batch_size  = int(config_parser.get("TRAIN","batch-size"))
-        
-
-        if config_parser.has_option("TRAIN","train"):
-            if config_parser.get("TRAIN","train") == "True":
-                option.train = True
-            else :
-                option.train = False
-                
-        
-        if config_parser.has_option("TRAIN","epoch"):
-            option.epoch     = int(config_parser.get("TRAIN","epoch"))
-            
-        if config_parser.has_option("TRAIN","visualize"):
-            if config_parser.get("TRAIN","visualize") == "True" :
-                option.visualize = True
-            else :
-                option.visualize = False
-                
-                
-        if config_parser.has_option("TRAIN","split"):
-            option.split  = float(config_parser.get("TRAIN","split"))
             
             
         
         if config_parser.has_option("DATA","width"):
             option.width_size  = int(config_parser.get("DATA","width"))
             
-        if config_parser.has_option("DATA","clip-dir"):
-            option.clip_im_dir = config_parser.get("DATA","clip-dir")
-        
-        if config_parser.has_option("DATA","label-dir"):
-            option.matting_dir = config_parser.get("DATA","label-dir")
-            
-        if config_parser.has_option("DATA","csv-path"):
-            option.csv_path = config_parser.get("DATA","csv-path")
-            
-        if config_parser.has_option("DATA","Dataset-class"):
-            option.dataset = config_parser.get("DATA","Dataset-class")
+
         
 
 
@@ -168,19 +129,12 @@ if __name__ == '__main__':
 
 
 
-    if argvs.train != None :
-        option.train = argvs.train
-        
-        
-    if argvs.epoch != None :
-        option.epoch = argvs.epoch
+
 
 
     if argvs.width_size != None :
         option.width_size = argvs.width_size
         
-    if argvs.batch_size != None :
-        option.batch_size = argvs.batch_size
         
     if argvs.save_weight != None :
         option.save_weight = argvs.save_weight
@@ -188,17 +142,13 @@ if __name__ == '__main__':
     if argvs.load_weight != None :
         option.load_weight = argvs.load_weight
         
-    if argvs.visualize != None :
-        option.visualize = argvs.visualize
         
     if argvs.treshold != None :
         option.treshold = argvs.treshold
         
-    if argvs.predict != None :
-        option.predict = argvs.predict
-        
-    if argvs.dropout != None :
-        option.dropout = argvs.dropout
+    if argvs.gpu != None :
+        option.gpu = argvs.gpu
+
 
 
     print(option)
@@ -207,18 +157,12 @@ if __name__ == '__main__':
     # PARAMETERS AND ADJUSTEMENT                                                                                                       #
     # ================================================================================================================ #
 
-    params = {'batch_size': option.batch_size,
-              'shuffle': True,
-              'drop_last': True}
     
     
     # device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and option.gpu:
         device = 'cuda'
-        cuda_kwargs = {'num_workers': 0,
-                       'pin_memory': True,
-                       'shuffle': True}
-        params.update(cuda_kwargs)
+        
     else :
         device = 'cpu'
         
@@ -239,10 +183,11 @@ if __name__ == '__main__':
     nb_classes  = option.nb_classes
     
     print('create model')
-    model = Unet_model(input_size, stage_sizes, head_filter, nb_classes, option.dropout)
+    model = Unet_model(input_size, stage_sizes, head_filter, nb_classes)
+    model.eval()
     
-    if option.load_weight != None :
-        model.load_state_dict(torch.load(option.load_weight))
+
+    model.load_state_dict(torch.load(option.load_weight))
         
         
     if torch.cuda.is_available():
@@ -250,69 +195,55 @@ if __name__ == '__main__':
         # print(model)
     
     
-    if option.train :
+    cap = cv2.VideoCapture(0)
+    
+    # Check if the webcam is opened correctly
+    if not cap.isOpened():
+        raise IOError("Cannot open webcam")
+    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        # print(frame.shape)
+        py_frame = torch.tensor(frame, dtype=torch.float32).permute([2,1,0])
+        py_frame = py_frame.unsqueeze(0)
+        # print(py_frame.size())
+        py_frame = transform(py_frame)
+        tran_frame = py_frame.squeeze(0).permute([2,1,0])
+        py_frame /= 255
         
-
-        train_loader, test_loader = create_train_test(option, transform, params, split=option.split)
+        py_frame = py_frame.to(device)
+        # print(py_frame.size())
+        # frame = cv2.resize(frame, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
         
-        print('begin training')
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-        loss_fn   = nn.CrossEntropyLoss()
+        out = model(py_frame)
+        # out = F.softmax(output, dim=1)
+        # out = out > treshold
+        visual_img, prob_output = segmented_img(out, option.treshold)
+        # print(visual_img.size())
         
-        epoch = option.epoch
+        visual_img = visual_img.squeeze(0)
+        visual_img = visual_img.permute([2,1,0])
+        visual_img = visual_img.to('cpu')
+        # print(visual_img.size())
         
-        loss_metric = []
-        pixel_acc_metric = []
-        iou_metric       = []
-        dice_metric      = []
-        
-        # train the model
-        for ep in range(epoch):
-            loss, pixel_acc, iou, dice = train(model, device, train_loader, loss_fn, optimizer, ep, option.visualize, option.treshold)
-            
-            loss_metric += loss
-            pixel_acc_metric += [pixel_acc]
-            iou_metric       += [iou]
-            dice_metric      += [dice]
-        # test model
-        print('begin testing')
-        test(model, device, test_loader, loss_fn, option.treshold)
-        
-        print('end testing')
-        if option.save_weight != None :
-            torch.save(model.state_dict(), option.save_weight)
-    else :
-        
-        #read image
-        in_img = read_image(option.predict, mode=ImageReadMode.RGB)
-        in_img = in_img.unsqueeze(0)
-        in_img = transform(in_img)
-        in_img = in_img/255
-        
-        in_img_cuda = in_img.to(device)
-        
-        #make prediction
-        out = model(in_img_cuda)
-        
-        out_img, prob_img = segmented_img(out, option.treshold)
- 
-        #plot
-        in_img = in_img.squeeze(0)
-
-        
-        fig, ax = plt.subplots(1, 3)
-        ax[0].set_title('Input image')
-        ax[0].imshow(in_img.permute(1,2,0))
-        
-        ax[1].set_title('Prob_class_0_image')
-        ax[1].imshow(prob_img)
-        
-        ax[2].set_title('Output image')
-        ax[2].imshow(out_img.permute(1,2,0))
+        prob_output = prob_output.squeeze(0)
+        prob_output = prob_output.permute([1,0])
+        prob_output = prob_output.to('cpu')
         
         
-        plt.xticks([]), plt.yticks([])
-        plt.show()
+        
+        cv2.imshow('Input', frame)
+        cv2.imshow('Input_TRANSFORM', tran_frame.numpy())
+        cv2.imshow('Output', visual_img.numpy())
+        cv2.imshow('Prob', prob_output.numpy())
+    
+        c = cv2.waitKey(1)
+        if c == 27:
+            break
+    
+    cap.release()
+    cv2.destroyAllWindows()
+   
         
         
 print('end')
